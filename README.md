@@ -287,6 +287,17 @@ caras para que el monitoreo sea más ligero.
 
 Para desarrollo local puedes guardar `CAMERA_SOURCE` en un archivo `.env`.
 
+## Sincronización con CameraApp Central
+
+El agente conserva la detección y la configuración RTSP localmente. Cuando se
+configura la sincronización, únicamente envía a CameraApp Central el estado del
+servicio, metadatos no sensibles de las cámaras y detecciones con edad y género
+completos. Los frames, direcciones RTSP y credenciales no salen del equipo.
+
+Parte de `.env.example` para preparar el agente. Las detecciones confirmadas por
+la API central se marcan en SQLite; si la red no está disponible, se conservan en
+una cola local y se reintentan en el siguiente ciclo.
+
 ## Deploy con frontend en Vercel
 
 Configura el frontend para llamar a la URL publica del backend, no a una ruta relativa de Vercel.

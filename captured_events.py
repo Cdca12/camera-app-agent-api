@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 from uuid import uuid4
 
 from fastapi import HTTPException
@@ -13,6 +14,7 @@ def record_captured_faces(
     camera_name: str | None,
     channel: str | None,
     faces: list[dict],
+    database_path: Path | None = None,
 ) -> list[dict]:
     if not faces:
         return []
@@ -21,7 +23,7 @@ def record_captured_faces(
     normalized_name = (camera_name or "Cámara del dispositivo").strip()
     captured_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    with database_connection() as connection:
+    with database_connection(database_path) as connection:
         store = connection.execute(
             "SELECT id FROM stores WHERE id = ? AND is_active = 1",
             (store_id,),
@@ -57,14 +59,22 @@ def record_captured_faces(
 
         events = []
         for face in faces:
+            gender = normalize_gender(face.get("gender"))
+            age_estimate = normalize_age(face.get("age"))
+            age_bucket = normalize_age_bucket(face.get("age_bucket"))
+            if gender == "unknown" or age_estimate is None or age_bucket == "unknown":
+                continue
             events.append(
                 {
                     "event_uuid": str(uuid4()),
-                    "gender": normalize_gender(face.get("gender")),
-                    "age_estimate": normalize_age(face.get("age")),
-                    "age_bucket": normalize_age_bucket(face.get("age_bucket")),
+                    "gender": gender,
+                    "age_estimate": age_estimate,
+                    "age_bucket": age_bucket,
                 }
             )
+
+        if not events:
+            return []
 
         connection.executemany(
             """
@@ -94,6 +104,13 @@ def record_captured_faces(
                 )
                 for event in events
             ],
+        )
+        connection.executemany(
+            """
+            INSERT OR IGNORE INTO event_sync_outbox (event_uuid)
+            VALUES (?)
+            """,
+            [(event["event_uuid"],) for event in events],
         )
         connection.commit()
 

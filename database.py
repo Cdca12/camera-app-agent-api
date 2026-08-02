@@ -125,6 +125,25 @@ def initialize_database(database_path: Path | None = None) -> None:
                 ON visitor_events (store_id, captured_at);
             CREATE INDEX IF NOT EXISTS idx_visitor_events_camera_captured_at
                 ON visitor_events (camera_id, captured_at);
+
+            CREATE TABLE IF NOT EXISTS event_sync_outbox (
+                event_uuid TEXT PRIMARY KEY,
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                last_attempt_at TEXT,
+                synced_at TEXT,
+                last_error TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (event_uuid) REFERENCES visitor_events(event_uuid) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_event_sync_outbox_pending
+                ON event_sync_outbox (synced_at, created_at);
+
+            CREATE TABLE IF NOT EXISTS central_sync_state (
+                key TEXT PRIMARY KEY,
+                value TEXT,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
             """
         )
         event_columns = {
@@ -167,6 +186,152 @@ def initialize_database(database_path: Path | None = None) -> None:
             """
         )
         connection.commit()
+
+
+def get_store_by_code(
+    code: str,
+    database_path: Path | None = None,
+) -> dict | None:
+    with database_connection(database_path) as connection:
+        row = connection.execute(
+            """
+            SELECT id, name, code, timezone
+            FROM stores
+            WHERE code = ? AND is_active = 1
+            """,
+            (code.strip().lower(),),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def get_sync_cameras(
+    store_id: int,
+    database_path: Path | None = None,
+) -> list[dict]:
+    with database_connection(database_path) as connection:
+        rows = connection.execute(
+            """
+            SELECT id, name, channel, is_active, collection_enabled
+            FROM cameras
+            WHERE store_id = ?
+            ORDER BY id
+            """,
+            (store_id,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_pending_sync_events(
+    store_id: int,
+    limit: int,
+    database_path: Path | None = None,
+) -> list[dict]:
+    with database_connection(database_path) as connection:
+        rows = connection.execute(
+            """
+            SELECT
+                visitor_events.event_uuid,
+                visitor_events.captured_at,
+                visitor_events.gender,
+                visitor_events.age_bucket,
+                cameras.channel,
+                stores.timezone
+            FROM event_sync_outbox
+            JOIN visitor_events ON visitor_events.event_uuid = event_sync_outbox.event_uuid
+            JOIN cameras ON cameras.id = visitor_events.camera_id
+            JOIN stores ON stores.id = visitor_events.store_id
+            WHERE visitor_events.store_id = ?
+              AND visitor_events.data_source = 'captured'
+              AND event_sync_outbox.synced_at IS NULL
+            ORDER BY event_sync_outbox.created_at, visitor_events.id
+            LIMIT ?
+            """,
+            (store_id, limit),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def count_pending_sync_events(
+    store_id: int,
+    database_path: Path | None = None,
+) -> int:
+    with database_connection(database_path) as connection:
+        row = connection.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM event_sync_outbox
+            JOIN visitor_events ON visitor_events.event_uuid = event_sync_outbox.event_uuid
+            WHERE visitor_events.store_id = ? AND event_sync_outbox.synced_at IS NULL
+            """,
+            (store_id,),
+        ).fetchone()
+    return int(row["count"])
+
+
+def mark_sync_events_synced(
+    event_uuids: list[str],
+    database_path: Path | None = None,
+) -> None:
+    if not event_uuids:
+        return
+    with database_connection(database_path) as connection:
+        connection.executemany(
+            """
+            UPDATE event_sync_outbox
+            SET synced_at = CURRENT_TIMESTAMP, last_attempt_at = CURRENT_TIMESTAMP,
+                last_error = NULL
+            WHERE event_uuid = ?
+            """,
+            [(event_uuid,) for event_uuid in event_uuids],
+        )
+        connection.commit()
+
+
+def mark_sync_events_failed(
+    event_uuids: list[str],
+    error: str,
+    database_path: Path | None = None,
+) -> None:
+    if not event_uuids:
+        return
+    safe_error = error.strip()[:500]
+    with database_connection(database_path) as connection:
+        connection.executemany(
+            """
+            UPDATE event_sync_outbox
+            SET attempt_count = attempt_count + 1,
+                last_attempt_at = CURRENT_TIMESTAMP,
+                last_error = ?
+            WHERE event_uuid = ?
+            """,
+            [(safe_error, event_uuid) for event_uuid in event_uuids],
+        )
+        connection.commit()
+
+
+def set_central_sync_state(
+    key: str,
+    value: str | None,
+    database_path: Path | None = None,
+) -> None:
+    with database_connection(database_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO central_sync_state (key, value, updated_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+            """,
+            (key, value),
+        )
+        connection.commit()
+
+
+def get_central_sync_state(database_path: Path | None = None) -> dict[str, str | None]:
+    with database_connection(database_path) as connection:
+        rows = connection.execute(
+            "SELECT key, value FROM central_sync_state"
+        ).fetchall()
+    return {row["key"]: row["value"] for row in rows}
 
 
 def initialize_test_database() -> Path:
