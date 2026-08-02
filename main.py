@@ -37,6 +37,7 @@ from configuration import (
     update_store,
 )
 from captured_events import record_captured_faces
+from central_sync import CentralSyncService, run_central_sync_monitor
 from database import (
     ensure_local_store,
     get_test_database_path,
@@ -110,6 +111,8 @@ test_store_runtime_camera_configs: dict[int, dict[str, str]] = {}
 face_cache: dict[str, list[dict]] = {}
 collection_monitor_stop = threading.Event()
 collection_monitor_thread: threading.Thread | None = None
+central_sync_stop = threading.Event()
+central_sync_thread: threading.Thread | None = None
 face_detector = cv2.CascadeClassifier(
     cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
 )
@@ -137,9 +140,29 @@ def start_collection_monitor() -> None:
     collection_monitor_thread.start()
 
 
+@app.on_event("startup")
+def start_central_sync_monitor() -> None:
+    global central_sync_thread
+    service = CentralSyncService()
+    if not service.settings.is_configured:
+        logger.info("La sincronización central está pendiente de configuración")
+        return
+    if central_sync_thread and central_sync_thread.is_alive():
+        return
+    central_sync_stop.clear()
+    central_sync_thread = threading.Thread(
+        target=run_central_sync_monitor,
+        args=(central_sync_stop, service),
+        name="camera-central-sync-monitor",
+        daemon=True,
+    )
+    central_sync_thread.start()
+
+
 @app.on_event("shutdown")
 def stop_collection_monitor() -> None:
     collection_monitor_stop.set()
+    central_sync_stop.set()
 
 
 def get_allowed_origins() -> list[str]:
@@ -173,10 +196,18 @@ app.add_middleware(
 
 @app.get("/health")
 def health():
+    central_sync = CentralSyncService().status()
     return {
         "status": "ok",
         "service": "camera-app-api",
+        "central_sync_configured": central_sync["configured"],
     }
+
+
+@app.get("/central-sync/status")
+def central_sync_status():
+    """Expose non-sensitive operational sync state for technical diagnostics."""
+    return CentralSyncService().status()
 
 
 @app.get("/")
@@ -184,6 +215,7 @@ def root():
     return {
         "service": "camera-app-api",
         "health": "/health",
+        "central_sync_status": "/central-sync/status",
         "stores": "/stores",
         "configuration": "/configuration",
         "test_configuration": "/test/configuration",
