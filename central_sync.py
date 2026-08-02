@@ -38,7 +38,6 @@ AGENT_VERSION = "0.3.0"
 class CentralSyncSettings:
     api_base_url: str
     agent_api_key: str
-    central_store_id: str
     local_store_code: str
     agent_name: str
     agent_version: str
@@ -48,7 +47,9 @@ class CentralSyncSettings:
 
     @property
     def is_configured(self) -> bool:
-        return bool(self.api_base_url and self.agent_api_key and self.central_store_id)
+        # The API key is enrolled for exactly one central store, so the agent
+        # must not also receive a mutable store identifier in local settings.
+        return bool(self.api_base_url and self.agent_api_key)
 
     @classmethod
     def from_environment(cls) -> "CentralSyncSettings":
@@ -58,7 +59,6 @@ class CentralSyncSettings:
         return cls(
             api_base_url=base_url,
             agent_api_key=os.getenv("CAMERA_APP_AGENT_API_KEY", "").strip(),
-            central_store_id=os.getenv("CAMERA_APP_CENTRAL_STORE_ID", "").strip(),
             local_store_code=os.getenv("CAMERA_APP_LOCAL_STORE_CODE", "local").strip().lower() or "local",
             agent_name=os.getenv("CAMERA_APP_AGENT_NAME", socket.gethostname()).strip() or socket.gethostname(),
             agent_version=os.getenv("CAMERA_APP_AGENT_VERSION", AGENT_VERSION).strip() or AGENT_VERSION,

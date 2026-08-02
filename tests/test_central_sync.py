@@ -42,7 +42,6 @@ class CentralSyncTests(unittest.TestCase):
         self.settings = CentralSyncSettings(
             api_base_url="https://central.example/api/v1",
             agent_api_key="test-key",
-            central_store_id="00000000-0000-0000-0000-000000000001",
             local_store_code="local",
             agent_name="Agent test",
             agent_version="0.3.0",

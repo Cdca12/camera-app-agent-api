@@ -294,6 +294,10 @@ configura la sincronización, únicamente envía a CameraApp Central el estado d
 servicio, metadatos no sensibles de las cámaras y detecciones con edad y género
 completos. Los frames, direcciones RTSP y credenciales no salen del equipo.
 
+La clave del agente se enrola para una tienda central específica; por eso el
+equipo no necesita guardar el identificador central de la tienda en su archivo
+local de configuración.
+
 Parte de `.env.example` para preparar el agente. Las detecciones confirmadas por
 la API central se marcan en SQLite; si la red no está disponible, se conservan en
 una cola local y se reintentan en el siguiente ciclo.
