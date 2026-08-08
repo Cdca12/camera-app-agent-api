@@ -40,7 +40,7 @@ SETUP_HTML = r"""<!doctype html>
     <section class="card">
       <h2>Acceso técnico</h2>
       <div class="row"><label>Clave técnica local<input id="local-key" type="password" autocomplete="off" placeholder="Solo se conserva durante esta sesión"></label><button id="connect" type="button">Conectar</button></div>
-      <div id="access-status" class="status">Verificando el estado del agente…</div>
+      <div id="access-status" class="status">Introduce la clave técnica para continuar con la configuración.</div>
     </section>
 
     <div id="setup-content">
@@ -98,14 +98,38 @@ SETUP_HTML = r"""<!doctype html>
       const grid = $('camera-grid'); grid.innerHTML = ''; state.selectedCamera = null; $('add-camera-area').classList.add('hidden');
       cameras.forEach((camera) => { const card = document.createElement('article'), image = document.createElement('img'), details = document.createElement('div'), name = document.createElement('strong'), channel = document.createElement('small'); card.className = 'camera'; image.alt = 'Vista previa temporal'; image.src = camera.preview_image; name.textContent = camera.name; channel.textContent = `Canal ${camera.channel}`; details.append(name, channel); card.append(image, details); card.onclick = () => { document.querySelectorAll('.camera').forEach((node) => node.classList.remove('selected')); card.classList.add('selected'); state.selectedCamera = camera; $('add-camera-area').classList.remove('hidden'); $('camera-name').value = camera.name; }; grid.append(card); });
     }
-    $('connect').onclick = async () => { state.key = $('local-key').value.trim(); try { const health = await request('/health'); setStatus('access-status', health.local_access_protected ? 'Acceso técnico protegido y agente disponible.' : 'Agente disponible. Configura una clave técnica antes de instalación permanente.', 'ok'); $('setup-content').classList.add('ready'); await loadStores(); } catch (error) { setStatus('access-status', error.message, 'error'); } };
+    async function connect() {
+      state.key = $('local-key').value.trim();
+      if (!state.key) {
+        setStatus('access-status', 'Introduce la clave técnica para continuar con la configuración.');
+        return;
+      }
+      try {
+        const health = await request('/health');
+        setStatus('access-status', health.local_access_protected ? 'Acceso técnico protegido y agente disponible.' : 'Agente disponible. Configura una clave técnica antes de instalación permanente.', 'ok');
+        $('setup-content').classList.add('ready');
+        await loadStores();
+      } catch (error) {
+        setStatus('access-status', error.message, 'error');
+      }
+    }
+    $('connect').onclick = connect;
+    $('local-key').addEventListener('keydown', (event) => { if (event.key === 'Enter') connect(); });
     $('reload-stores').onclick = () => loadStores().catch((error) => setStatus('access-status', error.message, 'error'));
     $('store-select').onchange = () => { state.selectedStoreId = selectedStore(); loadConfig().catch((error) => setStatus('config-status', error.message, 'error')); };
     $('create-store').onclick = async () => { try { const name = $('store-name').value.trim(), code = $('store-code').value.trim(); if (!name || !code) throw new Error('Escribe nombre y código de la tienda.'); const store = await request('/stores',{method:'POST',body:JSON.stringify({name,code,timezone:'America/Mazatlan'})}); state.selectedStoreId=store.id; await loadStores(); setStatus('access-status','Tienda local creada.','ok'); } catch(error) { setStatus('access-status',error.message,'error'); } };
     $('save-config').onclick = async () => { try { const storeId=requireStore(); const payload={host:$('host').value.trim(),username:$('username').value.trim(),password:$('password').value,port:$('port').value.trim(),path_template:$('path-template').value.trim()}; if (!payload.host || !payload.username || !payload.password || !payload.path_template) throw new Error('Completa host, usuario, contraseña y ruta RTSP.'); await request(`/stores/${storeId}/camera-config`,{method:'PUT',body:JSON.stringify(payload)}); $('password').value=''; setStatus('config-status','Conexión guardada localmente.','ok'); } catch(error) { setStatus('config-status',error.message,'error'); } };
     $('scan').onclick = async () => { try { const storeId=requireStore(); setStatus('scan-status','Escaneando cámaras…'); const data=await request('/camera-channels/scan',{method:'POST',body:JSON.stringify({store_id:storeId,max_channels:Number($('max-channels').value || 8)})}); renderCameras(data.cameras || []); setStatus('scan-status', data.cameras?.length ? `${data.cameras.length} cámara(s) encontrada(s). Selecciona una.` : 'No se detectaron cámaras. Revisa la conexión RTSP o agrega el canal más tarde.', data.cameras?.length ? 'ok' : ''); } catch(error) { setStatus('scan-status',error.message,'error'); } };
     $('add-camera').onclick = async () => { try { const storeId=requireStore(), camera=state.selectedCamera, name=$('camera-name').value.trim(); if(!camera || !name) throw new Error('Selecciona una cámara y define su nombre.'); await request(`/stores/${storeId}/cameras`,{method:'POST',body:JSON.stringify({name,channel:camera.channel,location:'',is_active:true,collection_enabled:false})}); setStatus('scan-status','Cámara agregada con recolección desactivada.','ok'); } catch(error) { setStatus('scan-status',error.message,'error'); } };
-    $('connect').click();
+    request('/health').then((health) => {
+      if (health.local_access_protected) {
+        setStatus('access-status', 'Introduce la clave técnica para continuar con la configuración.');
+        return;
+      }
+      setStatus('access-status', 'Agente disponible. Configura una clave técnica antes de instalación permanente.', 'ok');
+      $('setup-content').classList.add('ready');
+      loadStores().catch((error) => setStatus('access-status', error.message, 'error'));
+    }).catch(() => setStatus('access-status', 'No fue posible verificar el estado del agente.', 'error'));
   </script>
 </body>
 </html>"""
