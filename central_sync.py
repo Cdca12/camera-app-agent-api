@@ -29,6 +29,7 @@ from database import (
     mark_sync_events_synced,
     set_central_sync_state,
 )
+from operational_metrics import SystemMetricsCollector
 
 
 AGENT_VERSION = "0.3.0"
@@ -76,6 +77,7 @@ class CentralSyncService:
     ) -> None:
         self.settings = settings or CentralSyncSettings.from_environment()
         self.database_path = database_path
+        self.metrics = SystemMetricsCollector()
 
     def status(self) -> dict[str, Any]:
         local_store = self._get_local_store()
@@ -107,6 +109,7 @@ class CentralSyncService:
 
         try:
             pending_events = count_pending_sync_events(local_store["id"], self.database_path)
+            metrics = self.metrics.collect()
             self._post(
                 "/edge/heartbeat",
                 {
@@ -114,7 +117,10 @@ class CentralSyncService:
                     "status": "online",
                     "agent_version": self.settings.agent_version,
                     "pending_events": pending_events,
-                    "disk_percent": _disk_percent(),
+                    "cpu_percent": metrics["cpu_percent"],
+                    "memory_percent": metrics["memory_percent"],
+                    "temperature_celsius": metrics["temperature_celsius"],
+                    "disk_percent": metrics["disk_percent"],
                 },
             )
             set_central_sync_state("last_heartbeat_at", _now_iso(), self.database_path)
@@ -260,16 +266,6 @@ def _as_timezone_aware_iso(value: str, timezone_name: str) -> str:
 
 def _now_iso() -> str:
     return datetime.now().astimezone().isoformat()
-
-
-def _disk_percent() -> int | None:
-    try:
-        stats = os.statvfs("/")
-        if stats.f_blocks == 0:
-            return None
-        return round((1 - (stats.f_bavail / stats.f_blocks)) * 100)
-    except OSError:
-        return None
 
 
 def _get_positive_float(name: str, default: float, minimum: float) -> float:
