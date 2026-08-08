@@ -3,8 +3,9 @@ from __future__ import annotations
 from datetime import date
 import base64
 
-from fastapi import FastAPI, File, UploadFile, HTTPException, Query, Response, status
+from fastapi import FastAPI, File, UploadFile, HTTPException, Query, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from deepface import DeepFace
 from pydantic import BaseModel
 from PIL import Image
@@ -44,6 +45,7 @@ from database import (
     initialize_operational_database,
     initialize_test_database,
 )
+from local_access import LOCAL_ACCESS_HEADER, local_access_is_configured, request_has_local_access
 
 cv2.setLogLevel(0)
 
@@ -194,6 +196,21 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def require_local_access_key(request: Request, call_next):
+    if request_has_local_access(
+        request.url.path,
+        request.method,
+        request.headers.get(LOCAL_ACCESS_HEADER),
+    ):
+        return await call_next(request)
+
+    return JSONResponse(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        content={"detail": "Se requiere acceso técnico local."},
+    )
+
+
 @app.get("/health")
 def health():
     central_sync = CentralSyncService().status()
@@ -201,6 +218,7 @@ def health():
         "status": "ok",
         "service": "camera-app-api",
         "central_sync_configured": central_sync["configured"],
+        "local_access_protected": local_access_is_configured(),
     }
 
 

@@ -344,6 +344,19 @@ El script exige un checkout limpio, realiza `git pull --ff-only`, instala sin
 cache duplicada usando el disco, reinicia el servicio y valida `/health`. Si
 falla, restaura la revisión previa y la copia local de SQLite con su llave.
 
+### Acceso técnico local
+
+El agente opera dentro de la LAN, pero el puerto local no debe quedar abierto
+sin control. Al definir `CAMERA_APP_LOCAL_API_KEY` en
+`/etc/cameraapp/agent.env`, los endpoints técnicos —incluidos RTSP, frames y
+configuración— requieren el encabezado `X-CameraApp-Local-Key`. `/health`
+permanece público únicamente para monitoreo.
+
+Esta es una medida mínima para el piloto en una LAN confiable. Para una
+instalación comercial se debe añadir acceso administrativo protegido por HTTPS
+y/o VPN, además de restricciones de firewall. Nunca expongas el puerto 7860 a
+Internet.
+
 ## Deploy con frontend en Vercel
 
 Configura el frontend para llamar a la URL publica del backend, no a una ruta relativa de Vercel.
