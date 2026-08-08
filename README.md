@@ -357,6 +357,22 @@ instalación comercial se debe añadir acceso administrativo protegido por HTTPS
 y/o VPN, además de restricciones de firewall. Nunca expongas el puerto 7860 a
 Internet.
 
+### Configuración dentro de la LAN
+
+El dashboard público en Vercel no configura directamente a la Raspberry: una
+web HTTPS no puede depender de llamadas HTTP a un equipo privado de la LAN. El
+agente sirve una pantalla técnica del mismo origen en:
+
+```text
+http://cameraapp-pi.local:7860/setup
+```
+
+La página permite crear o seleccionar la tienda local, guardar RTSP, escanear
+canales y registrar la cámara. Si hay clave técnica, se escribe una vez para la
+sesión del navegador y no se guarda en el equipo cliente. La recolección queda
+desactivada al registrar cada cámara; habilítala únicamente después de validar
+el frame y la inferencia.
+
 ## Deploy con frontend en Vercel
 
 Configura el frontend para llamar a la URL publica del backend, no a una ruta relativa de Vercel.

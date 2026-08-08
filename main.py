@@ -46,6 +46,7 @@ from database import (
     initialize_test_database,
 )
 from local_access import LOCAL_ACCESS_HEADER, local_access_is_configured, request_has_local_access
+from local_setup import setup_page
 
 cv2.setLogLevel(0)
 
@@ -248,6 +249,12 @@ def root():
         "watch_camera_frame": "/watch-camera-frame",
         "watch_uploaded_frame": "/watch-uploaded-frame",
     }
+
+
+@app.get("/setup", include_in_schema=False)
+def local_setup():
+    """Serve the same-origin technical setup page for the LAN installation."""
+    return setup_page()
 
 
 @app.get("/stores")

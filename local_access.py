@@ -7,7 +7,7 @@ import os
 
 
 LOCAL_ACCESS_HEADER = "X-CameraApp-Local-Key"
-PUBLIC_PATHS = frozenset({"/", "/health", "/docs", "/openapi.json", "/redoc"})
+PUBLIC_PATHS = frozenset({"/", "/health", "/docs", "/openapi.json", "/redoc", "/setup"})
 
 
 def local_access_is_configured() -> bool:
