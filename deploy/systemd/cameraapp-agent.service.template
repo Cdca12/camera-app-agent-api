@@ -1,0 +1,27 @@
+[Unit]
+Description=CameraApp Edge Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@CAMERAAPP_USER@
+Group=@CAMERAAPP_USER@
+WorkingDirectory=@APP_DIR@
+EnvironmentFile=-/etc/cameraapp/agent.env
+Environment=PYTHONUNBUFFERED=1
+Environment=DEEPFACE_HOME=/var/lib/cameraapp/deepface
+Environment=CAMERA_APP_DB_PATH=/var/lib/cameraapp/camera_app_operational.db
+Environment=CAMERA_APP_TEST_DB_PATH=/var/lib/cameraapp/camera_app_test.db
+ExecStart=@APP_DIR@/.venv/bin/python -m uvicorn main:app --host 0.0.0.0 --port 7860
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=90
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=read-only
+ReadWritePaths=/var/lib/cameraapp
+
+[Install]
+WantedBy=multi-user.target

@@ -110,9 +110,10 @@ PUT /configuration/stores/1/primary-camera
 }
 ```
 
-Estas configuraciones se guardan en SQLite. Las credenciales RTSP no se
-guardan en la base: se aplican únicamente en memoria mediante `POST
-/camera-config`.
+Estas configuraciones se guardan en SQLite. Las credenciales RTSP se cifran
+localmente con Fernet y nunca se exponen en las respuestas ni se sincronizan
+con CameraApp Central. La llave Fernet se guarda junto a la base de datos y
+debe respaldarse con ella.
 
 Si no se envían fechas, el endpoint utiliza el día actual. Los nombres técnicos
 de tablas, columnas y valores internos están en inglés; las etiquetas listas
@@ -301,6 +302,47 @@ local de configuración.
 Parte de `.env.example` para preparar el agente. Las detecciones confirmadas por
 la API central se marcan en SQLite; si la red no está disponible, se conservan en
 una cola local y se reintentan en el siguiente ciclo.
+
+## Operación en Raspberry Pi
+
+La instalación de producción debe conservar su estado fuera del checkout:
+
+- SQLite y llave Fernet: `/var/lib/cameraapp`.
+- Pesos descargados por DeepFace: `/var/lib/cameraapp/deepface`.
+- Variables privadas: `/etc/cameraapp/agent.env` con permisos restringidos.
+
+En la Raspberry, tras clonar el repositorio y crear el entorno virtual, instala
+el servicio versionado con:
+
+```bash
+sudo scripts/install_agent.sh
+```
+
+El archivo `deploy/systemd/cameraapp-agent.service.template` se convierte en la
+unidad `cameraapp-agent`; esta debe iniciar automáticamente y responder en
+`/health`. El primer inicio puede tardar mientras TensorFlow prepara sus
+componentes.
+
+Antes de usar una cámara real, ejecuta el benchmark con una imagen temporal que
+no se sube ni se guarda por CameraApp:
+
+```bash
+.venv/bin/python scripts/benchmark_inference.py --image /ruta/temporal/frame.jpg
+```
+
+El resultado JSON contiene duración y métricas de equipo, no edad, género ni
+recortes faciales. Evalúa RAM, swap, temperatura y latencia antes de habilitar
+la recolección continua.
+
+Para actualizar de forma recuperable:
+
+```bash
+sudo scripts/update_agent.sh
+```
+
+El script exige un checkout limpio, realiza `git pull --ff-only`, instala sin
+cache duplicada usando el disco, reinicia el servicio y valida `/health`. Si
+falla, restaura la revisión previa y la copia local de SQLite con su llave.
 
 ## Deploy con frontend en Vercel
 
