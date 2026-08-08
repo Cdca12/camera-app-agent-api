@@ -116,6 +116,54 @@ def create_store(
     }
 
 
+def upsert_assigned_store(
+    name: str,
+    code: str,
+    timezone: str,
+    database_path: Path | None = None,
+) -> dict:
+    """Create or update the single store metadata assigned by CameraApp Central.
+
+    The agent receives only public store metadata here. RTSP settings are not
+    touched, so refreshing an assignment never overwrites local credentials.
+    """
+
+    normalized_name = name.strip()
+    normalized_code = code.strip().lower()
+    normalized_timezone = timezone.strip() or "America/Mazatlan"
+    if not normalized_name or not STORE_CODE_PATTERN.fullmatch(normalized_code):
+        raise HTTPException(status_code=422, detail="La tienda asignada por CameraApp Central no es válida")
+
+    with database_connection(database_path) as connection:
+        existing = connection.execute(
+            "SELECT id FROM stores WHERE code = ?", (normalized_code,)
+        ).fetchone()
+        if existing is None:
+            cursor = connection.execute(
+                "INSERT INTO stores (name, code, timezone) VALUES (?, ?, ?)",
+                (normalized_name, normalized_code, normalized_timezone),
+            )
+            store_id = cursor.lastrowid
+        else:
+            store_id = existing["id"]
+            connection.execute(
+                """
+                UPDATE stores
+                SET name = ?, timezone = ?, is_active = 1, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (normalized_name, normalized_timezone, store_id),
+            )
+        connection.commit()
+
+    return {
+        "id": store_id,
+        "name": normalized_name,
+        "code": normalized_code,
+        "timezone": normalized_timezone,
+    }
+
+
 def update_store(
     store_id: int,
     name: str,

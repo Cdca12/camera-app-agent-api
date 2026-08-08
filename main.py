@@ -34,6 +34,7 @@ from configuration import (
     list_cameras,
     save_primary_camera,
     save_store_camera_config,
+    upsert_assigned_store,
     update_camera,
     update_store,
 )
@@ -227,6 +228,34 @@ def health():
 def central_sync_status():
     """Expose non-sensitive operational sync state for technical diagnostics."""
     return CentralSyncService().status()
+
+
+@app.get("/central-store/status")
+def central_store_status():
+    """Return only local linkage state; central store data requires explicit refresh."""
+    sync = CentralSyncService()
+    return sync.status()
+
+
+@app.post("/central-store/refresh")
+def refresh_central_store_assignment():
+    """Pull the one central store assigned to this agent into local SQLite."""
+    sync = CentralSyncService()
+    installation = sync.get_assigned_installation()
+    store = installation["store"]
+    configured_code = sync.settings.local_store_code
+    assigned_code = str(store.get("code", "")).strip().lower()
+    if configured_code != assigned_code:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="El código local del agente no coincide con la tienda asignada por CameraApp Central",
+        )
+    local_store = upsert_assigned_store(
+        str(store.get("name", "")),
+        assigned_code,
+        str(store.get("timezone", "")),
+    )
+    return {"store": local_store, "agent": {"id": installation.get("agent_id"), "name": installation.get("name")}}
 
 
 @app.get("/")

@@ -133,6 +133,17 @@ class CentralSyncService:
             self._record_error(str(error))
             return {**self.status(), "error": str(error)}
 
+    def get_assigned_installation(self) -> dict[str, Any]:
+        """Retrieve the one store this agent was enrolled for in Central."""
+
+        if not self.settings.is_configured:
+            raise CentralSyncError("La vinculación con CameraApp Central está pendiente de configuración")
+        payload = self._get("/edge/installation")
+        store = payload.get("store")
+        if not isinstance(store, dict):
+            raise CentralSyncError("La API central no devolvió una tienda asignada válida")
+        return payload
+
     def _get_local_store(self) -> dict | None:
         return get_store_by_code(self.settings.local_store_code, self.database_path)
 
@@ -210,16 +221,24 @@ class CentralSyncService:
             return self.settings.default_camera_channel
 
     def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
-        body = json.dumps(payload).encode("utf-8")
+        return self._request("POST", path, payload)
+
+    def _get(self, path: str) -> dict[str, Any]:
+        return self._request("GET", path)
+
+    def _request(self, method: str, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        body = json.dumps(payload).encode("utf-8") if payload is not None else None
+        headers = {
+            "Accept": "application/json",
+            "X-CameraApp-Agent-Key": self.settings.agent_api_key,
+        }
+        if body is not None:
+            headers["Content-Type"] = "application/json"
         request = Request(
             f"{self.settings.api_base_url}{path}",
             data=body,
-            method="POST",
-            headers={
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-                "X-CameraApp-Agent-Key": self.settings.agent_api_key,
-            },
+            method=method,
+            headers=headers,
         )
         try:
             with urlopen(request, timeout=15) as response:

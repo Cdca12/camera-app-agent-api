@@ -25,6 +25,14 @@ class RecordingSyncService(CentralSyncService):
             return {"accepted_count": len(payload["events"]), "duplicate_count": 0}
         return {}
 
+    def _get(self, path: str) -> dict:
+        self.requests.append((path, {}))
+        return {
+            "agent_id": "agent-id",
+            "name": "Agent test",
+            "store": {"id": "store-id", "name": "Maja Centro", "code": "maja-centro", "timezone": "America/Mazatlan"},
+        }
+
 
 class CentralSyncTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -87,6 +95,13 @@ class CentralSyncTests(unittest.TestCase):
         self.assertEqual(recorded, [])
         self.assertEqual(count_pending_sync_events(self.store_id, self.database_path), 0)
         self.assertEqual(get_pending_sync_events(self.store_id, 10, self.database_path), [])
+
+    def test_assigned_installation_returns_only_the_agent_store(self) -> None:
+        service = RecordingSyncService(self.settings, self.database_path)
+        installation = service.get_assigned_installation()
+
+        self.assertEqual(installation["store"]["code"], "maja-centro")
+        self.assertIn(("/edge/installation", {}), service.requests)
 
 
 if __name__ == "__main__":

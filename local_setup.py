@@ -45,9 +45,11 @@ SETUP_HTML = r"""<!doctype html>
 
     <div id="setup-content">
       <section class="card">
-        <div class="eyebrow">1 · Tienda local</div><h2>Selecciona o crea la tienda del agente</h2>
+        <div class="eyebrow">1 · Tienda asignada</div><h2>Vincular la tienda asignada al agente</h2>
+        <p id="central-store-note" class="muted">Este equipo sólo puede recibir la tienda que fue asignada al registrar el agente desde CameraApp Central.</p>
         <div class="row"><label>Tienda<select id="store-select"><option>Cargando…</option></select></label><button id="reload-stores" class="secondary" type="button">Actualizar</button></div>
-        <details style="margin-top:20px"><summary class="muted">Crear una tienda local</summary><div class="grid" style="margin-top:14px"><label>Nombre<input id="store-name" placeholder="Hikvision Piedra"></label><label>Código<input id="store-code" placeholder="hikvision-piedra"></label></div><button id="create-store" style="margin-top:14px" type="button">Crear tienda</button></details>
+        <button id="refresh-central-store" class="secondary hidden" style="margin-top:14px" type="button">Obtener tienda asignada</button>
+        <details id="local-store-create" style="margin-top:20px"><summary class="muted">Crear una tienda local temporal</summary><p class="muted">Úsalo sólo antes de vincular este equipo con CameraApp Central.</p><div class="grid" style="margin-top:14px"><label>Nombre<input id="store-name" placeholder="Prueba local"></label><label>Código<input id="store-code" placeholder="prueba-local"></label></div><button id="create-store" style="margin-top:14px" type="button">Crear tienda</button></details>
       </section>
 
       <section class="card">
@@ -87,6 +89,24 @@ SETUP_HTML = r"""<!doctype html>
       state.selectedStoreId = selectedStore() || null;
       if (state.selectedStoreId) await loadConfig();
     }
+    async function loadCentralStoreStatus() {
+      const status = await request('/central-store/status');
+      const refresh = $('refresh-central-store'), temporary = $('local-store-create'), note = $('central-store-note');
+      if (!status.configured) {
+        refresh.classList.add('hidden'); temporary.classList.remove('hidden');
+        note.textContent = 'Este equipo todavía no está vinculado a CameraApp Central. Puedes usar una tienda local temporal para validar la instalación.';
+        return;
+      }
+      refresh.classList.remove('hidden'); temporary.classList.add('hidden');
+      note.textContent = 'Este agente sólo puede recibir la tienda que el administrador asignó desde CameraApp Central.';
+      if (!status.local_store_found) await refreshCentralStore();
+    }
+    async function refreshCentralStore() {
+      const data = await request('/central-store/refresh', {method:'POST'});
+      state.selectedStoreId = data.store.id;
+      await loadStores();
+      setStatus('access-status', `Tienda asignada vinculada: ${data.store.name}.`, 'ok');
+    }
     async function loadConfig() {
       const storeId = selectedStore(); if (!storeId) return;
       const data = await request(`/stores/${storeId}/camera-config`); const config = data.config || {};
@@ -109,6 +129,7 @@ SETUP_HTML = r"""<!doctype html>
         setStatus('access-status', health.local_access_protected ? 'Acceso técnico protegido y agente disponible.' : 'Agente disponible. Configura una clave técnica antes de instalación permanente.', 'ok');
         $('setup-content').classList.add('ready');
         await loadStores();
+        await loadCentralStoreStatus();
       } catch (error) {
         setStatus('access-status', error.message, 'error');
       }
@@ -116,6 +137,7 @@ SETUP_HTML = r"""<!doctype html>
     $('connect').onclick = connect;
     $('local-key').addEventListener('keydown', (event) => { if (event.key === 'Enter') connect(); });
     $('reload-stores').onclick = () => loadStores().catch((error) => setStatus('access-status', error.message, 'error'));
+    $('refresh-central-store').onclick = () => refreshCentralStore().catch((error) => setStatus('access-status', error.message, 'error'));
     $('store-select').onchange = () => { state.selectedStoreId = selectedStore(); loadConfig().catch((error) => setStatus('config-status', error.message, 'error')); };
     $('create-store').onclick = async () => { try { const name = $('store-name').value.trim(), code = $('store-code').value.trim(); if (!name || !code) throw new Error('Escribe nombre y código de la tienda.'); const store = await request('/stores',{method:'POST',body:JSON.stringify({name,code,timezone:'America/Mazatlan'})}); state.selectedStoreId=store.id; await loadStores(); setStatus('access-status','Tienda local creada.','ok'); } catch(error) { setStatus('access-status',error.message,'error'); } };
     $('save-config').onclick = async () => { try { const storeId=requireStore(); const payload={host:$('host').value.trim(),username:$('username').value.trim(),password:$('password').value,port:$('port').value.trim(),path_template:$('path-template').value.trim()}; if (!payload.host || !payload.username || !payload.password || !payload.path_template) throw new Error('Completa host, usuario, contraseña y ruta RTSP.'); await request(`/stores/${storeId}/camera-config`,{method:'PUT',body:JSON.stringify(payload)}); $('password').value=''; setStatus('config-status','Conexión guardada localmente.','ok'); } catch(error) { setStatus('config-status',error.message,'error'); } };
@@ -128,7 +150,7 @@ SETUP_HTML = r"""<!doctype html>
       }
       setStatus('access-status', 'Agente disponible. Configura una clave técnica antes de instalación permanente.', 'ok');
       $('setup-content').classList.add('ready');
-      loadStores().catch((error) => setStatus('access-status', error.message, 'error'));
+      loadStores().then(loadCentralStoreStatus).catch((error) => setStatus('access-status', error.message, 'error'));
     }).catch(() => setStatus('access-status', 'No fue posible verificar el estado del agente.', 'error'));
   </script>
 </body>
