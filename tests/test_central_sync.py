@@ -9,6 +9,7 @@ from captured_events import record_captured_faces
 from central_sync import CentralSyncService, CentralSyncSettings
 from configuration import create_camera
 from database import (
+    _copy_simulated_data,
     count_pending_sync_events,
     database_connection,
     get_pending_sync_events,
@@ -160,6 +161,49 @@ class CentralSyncTests(unittest.TestCase):
         self.assertEqual(rows[0]["name"], "Cámara entrada")
         self.assertEqual(rows[0]["thumbnail_jpeg"], b"\xff\xd8\xffsecond")
         self.assertEqual(rows[0]["thumbnail_synced"], 0)
+
+    def test_simulated_copy_accepts_camera_thumbnail_columns(self) -> None:
+        source_path = Path(self.temp_dir.name) / "source.db"
+        target_path = Path(self.temp_dir.name) / "target.db"
+        initialize_database(source_path)
+        initialize_database(target_path)
+
+        with database_connection(source_path) as connection:
+            store = connection.execute(
+                "INSERT INTO stores (name, code) VALUES (?, ?)",
+                ("Tienda simulada", "tienda-simulada"),
+            )
+            camera = connection.execute(
+                """
+                INSERT INTO cameras (
+                    store_id, name, channel, thumbnail_jpeg, thumbnail_synced
+                ) VALUES (?, ?, ?, ?, 1)
+                """,
+                (store.lastrowid, "Cámara simulada", "101", b"\xff\xd8\xffthumbnail"),
+            )
+            connection.execute(
+                """
+                INSERT INTO visitor_events (
+                    store_id, camera_id, event_uuid, captured_at, gender,
+                    age_estimate, age_bucket, data_source
+                ) VALUES (?, ?, ?, CURRENT_TIMESTAMP, 'male', 30, '25_34', 'simulated')
+                """,
+                (store.lastrowid, camera.lastrowid, "simulated-event"),
+            )
+            connection.commit()
+
+        _copy_simulated_data(source_path, target_path)
+
+        with database_connection(target_path) as connection:
+            copied_camera = connection.execute(
+                "SELECT name, thumbnail_jpeg FROM cameras WHERE channel = '101'"
+            ).fetchone()
+            copied_events = connection.execute(
+                "SELECT COUNT(*) FROM visitor_events WHERE data_source = 'simulated'"
+            ).fetchone()[0]
+        self.assertEqual(copied_camera["name"], "Cámara simulada")
+        self.assertIsNone(copied_camera["thumbnail_jpeg"])
+        self.assertEqual(copied_events, 1)
 
 
 if __name__ == "__main__":

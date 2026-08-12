@@ -489,7 +489,11 @@ def _copy_data_by_source(
             "SELECT * FROM stores ORDER BY id"
         ).fetchall()
         cameras = source_connection.execute(
-            "SELECT * FROM cameras ORDER BY id"
+            """
+            SELECT id, store_id, name, channel, location, is_active, created_at, updated_at
+            FROM cameras
+            ORDER BY id
+            """
         ).fetchall()
         events = source_connection.execute(
             """
