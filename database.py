@@ -73,6 +73,8 @@ def initialize_database(database_path: Path | None = None) -> None:
                 location TEXT,
                 is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
                 collection_enabled INTEGER NOT NULL DEFAULT 0 CHECK (collection_enabled IN (0, 1)),
+                thumbnail_jpeg BLOB,
+                thumbnail_synced INTEGER NOT NULL DEFAULT 0 CHECK (thumbnail_synced IN (0, 1)),
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE (store_id, channel),
@@ -179,6 +181,12 @@ def initialize_database(database_path: Path | None = None) -> None:
                 ADD COLUMN collection_enabled INTEGER NOT NULL DEFAULT 0
                 """
             )
+        if "thumbnail_jpeg" not in camera_columns:
+            connection.execute("ALTER TABLE cameras ADD COLUMN thumbnail_jpeg BLOB")
+        if "thumbnail_synced" not in camera_columns:
+            connection.execute(
+                "ALTER TABLE cameras ADD COLUMN thumbnail_synced INTEGER NOT NULL DEFAULT 0"
+            )
         connection.execute(
             """
             CREATE INDEX IF NOT EXISTS idx_visitor_events_store_source_captured_at
@@ -211,7 +219,8 @@ def get_sync_cameras(
     with database_connection(database_path) as connection:
         rows = connection.execute(
             """
-            SELECT id, name, channel, is_active, collection_enabled
+            SELECT id, name, channel, is_active, collection_enabled,
+                   thumbnail_jpeg, thumbnail_synced
             FROM cameras
             WHERE store_id = ?
             ORDER BY id
@@ -219,6 +228,20 @@ def get_sync_cameras(
             (store_id,),
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def mark_camera_thumbnails_synced(
+    camera_ids: list[int],
+    database_path: Path | None = None,
+) -> None:
+    if not camera_ids:
+        return
+    with database_connection(database_path) as connection:
+        connection.executemany(
+            "UPDATE cameras SET thumbnail_synced = 1 WHERE id = ?",
+            [(camera_id,) for camera_id in camera_ids],
+        )
+        connection.commit()
 
 
 def get_pending_sync_events(

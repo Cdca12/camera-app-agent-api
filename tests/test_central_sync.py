@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import base64
 import tempfile
 import unittest
 from pathlib import Path
 
 from captured_events import record_captured_faces
 from central_sync import CentralSyncService, CentralSyncSettings
+from configuration import create_camera
 from database import (
     count_pending_sync_events,
     database_connection,
@@ -102,6 +104,62 @@ class CentralSyncTests(unittest.TestCase):
 
         self.assertEqual(installation["store"]["code"], "maja-centro")
         self.assertIn(("/edge/installation", {}), service.requests)
+
+    def test_camera_thumbnail_is_sent_once(self) -> None:
+        thumbnail = b"\xff\xd8\xffcamera-thumbnail"
+        with database_connection(self.database_path) as connection:
+            connection.execute(
+                """
+                INSERT INTO cameras (
+                    store_id, name, channel, is_active, collection_enabled,
+                    thumbnail_jpeg, thumbnail_synced
+                ) VALUES (?, ?, ?, 1, 0, ?, 0)
+                """,
+                (self.store_id, "Cámara 1", "101", thumbnail),
+            )
+            connection.commit()
+
+        service = RecordingSyncService(self.settings, self.database_path)
+        service.sync_once()
+        first_payload = next(payload for path, payload in service.requests if path == "/edge/cameras/sync")
+        self.assertEqual(
+            first_payload["cameras"][0]["thumbnail_base64"],
+            base64.b64encode(thumbnail).decode("ascii"),
+        )
+
+        service.requests.clear()
+        service.sync_once()
+        second_payload = next(payload for path, payload in service.requests if path == "/edge/cameras/sync")
+        self.assertNotIn("thumbnail_base64", second_payload["cameras"][0])
+
+    def test_registering_existing_channel_refreshes_thumbnail_without_duplication(self) -> None:
+        first_thumbnail = base64.b64encode(b"\xff\xd8\xfffirst").decode("ascii")
+        second_thumbnail = base64.b64encode(b"\xff\xd8\xffsecond").decode("ascii")
+
+        first = create_camera(
+            self.store_id,
+            "Cámara original",
+            "101",
+            preview_image=f"data:image/jpeg;base64,{first_thumbnail}",
+            database_path=self.database_path,
+        )
+        refreshed = create_camera(
+            self.store_id,
+            "Cámara entrada",
+            "101",
+            preview_image=f"data:image/jpeg;base64,{second_thumbnail}",
+            database_path=self.database_path,
+        )
+
+        self.assertEqual(refreshed["id"], first["id"])
+        with database_connection(self.database_path) as connection:
+            rows = connection.execute(
+                "SELECT name, thumbnail_jpeg, thumbnail_synced FROM cameras"
+            ).fetchall()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["name"], "Cámara entrada")
+        self.assertEqual(rows[0]["thumbnail_jpeg"], b"\xff\xd8\xffsecond")
+        self.assertEqual(rows[0]["thumbnail_synced"], 0)
 
 
 if __name__ == "__main__":

@@ -99,6 +99,7 @@ class CameraSettings(BaseModel):
     location: str = ""
     is_active: bool = True
     collection_enabled: bool = False
+    preview_image: Optional[str] = None
 
 
 class PrimaryCameraSettings(BaseModel):

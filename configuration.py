@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import re
 from pathlib import Path
 
@@ -338,34 +340,70 @@ def create_camera(
     location: str = "",
     is_active: bool = True,
     collection_enabled: bool = False,
+    preview_image: str | None = None,
     database_path: Path | None = None,
 ) -> dict:
     normalized_name, normalized_channel, normalized_location = _normalize_camera_fields(name, channel, location)
-    try:
-        with database_connection(database_path) as connection:
-            _require_active_store(connection, store_id)
-            cursor = connection.execute(
-                """
-                INSERT INTO cameras (store_id, name, channel, location, is_active, collection_enabled)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (store_id, normalized_name, normalized_channel, normalized_location, int(is_active), int(collection_enabled)),
+    with database_connection(database_path) as connection:
+        _require_active_store(connection, store_id)
+        thumbnail_jpeg = _decode_preview_image(preview_image)
+        connection.execute(
+            """
+            INSERT INTO cameras (
+                store_id, name, channel, location, is_active,
+                collection_enabled, thumbnail_jpeg, thumbnail_synced
             )
-            connection.commit()
-    except Exception as error:
-        if "UNIQUE constraint failed: cameras.store_id, cameras.channel" in str(error):
-            raise HTTPException(status_code=409, detail="Ya existe una cámara con ese canal en esta tienda")
-        raise
+            VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+            ON CONFLICT(store_id, channel) DO UPDATE SET
+                name = excluded.name,
+                location = excluded.location,
+                thumbnail_jpeg = COALESCE(excluded.thumbnail_jpeg, cameras.thumbnail_jpeg),
+                thumbnail_synced = CASE
+                    WHEN excluded.thumbnail_jpeg IS NOT NULL THEN 0
+                    ELSE cameras.thumbnail_synced
+                END,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (
+                store_id, normalized_name, normalized_channel, normalized_location,
+                int(is_active), int(collection_enabled), thumbnail_jpeg,
+            ),
+        )
+        row = connection.execute(
+            """
+            SELECT id, thumbnail_jpeg
+            FROM cameras
+            WHERE store_id = ? AND channel = ?
+            """,
+            (store_id, normalized_channel),
+        ).fetchone()
+        connection.commit()
 
     return {
-        "id": cursor.lastrowid,
+        "id": row["id"],
         "store_id": store_id,
         "name": normalized_name,
         "channel": normalized_channel,
         "location": normalized_location,
         "is_active": is_active,
         "collection_enabled": collection_enabled,
+        "has_thumbnail": row["thumbnail_jpeg"] is not None,
     }
+
+
+def _decode_preview_image(preview_image: str | None) -> bytes | None:
+    if not preview_image:
+        return None
+    prefix = "data:image/jpeg;base64,"
+    if not preview_image.startswith(prefix):
+        raise HTTPException(status_code=422, detail="La miniatura debe ser una imagen JPEG válida")
+    try:
+        payload = base64.b64decode(preview_image[len(prefix):], validate=True)
+    except (ValueError, TypeError, binascii.Error) as error:
+        raise HTTPException(status_code=422, detail="La miniatura no es válida") from error
+    if not payload.startswith(b"\xff\xd8\xff") or len(payload) > 200_000:
+        raise HTTPException(status_code=422, detail="La miniatura JPEG excede el límite permitido")
+    return payload
 
 
 def update_camera(

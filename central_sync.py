@@ -7,6 +7,7 @@ database and are never part of this module's payloads.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import socket
@@ -27,6 +28,7 @@ from database import (
     get_sync_cameras,
     mark_sync_events_failed,
     mark_sync_events_synced,
+    mark_camera_thumbnails_synced,
     set_central_sync_state,
 )
 from operational_metrics import SystemMetricsCollector
@@ -149,20 +151,24 @@ class CentralSyncService:
 
     def _sync_cameras(self, local_store_id: int) -> None:
         payload_cameras = []
+        thumbnail_camera_ids = []
         for camera in get_sync_cameras(local_store_id, self.database_path):
             channel = self._central_channel(camera["channel"])
             if channel is None:
                 continue
-            payload_cameras.append(
-                {
-                    "name": camera["name"],
-                    "channel": channel,
-                    "collection_enabled": bool(camera["collection_enabled"]),
-                    "status": "collecting" if camera["collection_enabled"] else "ready",
-                }
-            )
+            payload = {
+                "name": camera["name"],
+                "channel": channel,
+                "collection_enabled": bool(camera["collection_enabled"]),
+                "status": "collecting" if camera["collection_enabled"] else "ready",
+            }
+            if camera.get("thumbnail_jpeg") and not camera.get("thumbnail_synced"):
+                payload["thumbnail_base64"] = base64.b64encode(camera["thumbnail_jpeg"]).decode("ascii")
+                thumbnail_camera_ids.append(camera["id"])
+            payload_cameras.append(payload)
         if payload_cameras:
             self._post("/edge/cameras/sync", {"cameras": payload_cameras})
+            mark_camera_thumbnails_synced(thumbnail_camera_ids, self.database_path)
 
     def _sync_events(self, local_store: dict) -> int:
         events = get_pending_sync_events(
