@@ -38,7 +38,7 @@ from configuration import (
     update_store,
 )
 from captured_events import record_captured_faces
-from camera_preview import build_camera_preview
+from camera_preview import build_camera_preview, build_scan_preview
 from central_sync import CentralSyncService, run_central_sync_monitor
 from database import (
     ensure_local_store,
@@ -358,7 +358,16 @@ def test_store_cameras(store_id: int):
 
 @app.post("/stores/{store_id}/cameras", status_code=status.HTTP_201_CREATED)
 def create_operational_camera(store_id: int, camera: CameraSettings):
-    return create_camera(store_id, **camera.model_dump())
+    frame = capture_camera_frame(channel=camera.channel, store_id=store_id)
+    preview_image = build_camera_preview(frame)
+    if preview_image is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No se pudo generar la miniatura final de la cámara.",
+        )
+    settings = camera.model_dump()
+    settings["preview_image"] = preview_image
+    return create_camera(store_id, **settings)
 
 
 @app.post("/test/stores/{store_id}/cameras", status_code=status.HTTP_201_CREATED)
@@ -894,7 +903,7 @@ def probe_camera_source_direct(
 
         if frame is not None:
             height, width = frame.shape[:2]
-            return width, height, build_camera_preview(frame)
+            return width, height, build_scan_preview(frame)
     finally:
         capture.release()
 
@@ -941,7 +950,7 @@ def probe_camera_source_worker(
 
         if frame is not None:
             height, width = frame.shape[:2]
-            result_queue.put((width, height, build_camera_preview(frame)))
+            result_queue.put((width, height, build_scan_preview(frame)))
     finally:
         capture.release()
 
