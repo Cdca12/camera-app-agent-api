@@ -377,12 +377,21 @@ def create_test_camera(store_id: int, camera: CameraSettings):
 
 @app.put("/stores/{store_id}/cameras/{camera_id}")
 def update_operational_camera(store_id: int, camera_id: int, camera: CameraSettings):
-    return update_camera(store_id, camera_id, **camera.model_dump())
+    return update_camera(
+        store_id,
+        camera_id,
+        **camera.model_dump(exclude={"preview_image"}),
+    )
 
 
 @app.put("/test/stores/{store_id}/cameras/{camera_id}")
 def update_test_camera(store_id: int, camera_id: int, camera: CameraSettings):
-    return update_camera(store_id, camera_id, **camera.model_dump(), database_path=get_test_database_path())
+    return update_camera(
+        store_id,
+        camera_id,
+        **camera.model_dump(exclude={"preview_image"}),
+        database_path=get_test_database_path(),
+    )
 
 
 @app.delete("/stores/{store_id}/cameras/{camera_id}", status_code=status.HTTP_204_NO_CONTENT)
