@@ -19,9 +19,9 @@ if ! id "${CAMERAAPP_USER}" >/dev/null 2>&1; then
   exit 1
 fi
 
-mkdir -p "${STATE_DIR}" "${STATE_DIR}/deepface" "${STATE_DIR}/tmp" "${CONFIG_DIR}"
+mkdir -p "${STATE_DIR}" "${STATE_DIR}/models" "${STATE_DIR}/tmp" "${CONFIG_DIR}"
 chown -R "${CAMERAAPP_USER}:${CAMERAAPP_USER}" "${STATE_DIR}"
-chmod 700 "${STATE_DIR}" "${STATE_DIR}/deepface" "${STATE_DIR}/tmp"
+chmod 700 "${STATE_DIR}" "${STATE_DIR}/models" "${STATE_DIR}/tmp"
 
 if [[ ! -f "${CONFIG_DIR}/agent.env" ]]; then
   install -m 600 -o "${CAMERAAPP_USER}" -g "${CAMERAAPP_USER}" \
@@ -37,6 +37,8 @@ chmod 644 "${SERVICE_PATH}"
 
 export TMPDIR="${STATE_DIR}/tmp"
 "${APP_DIR}/.venv/bin/python" -m pip install --no-cache-dir -r "${APP_DIR}/requirements.txt"
+"${APP_DIR}/.venv/bin/python" "${APP_DIR}/scripts/install_lightweight_model.py" \
+  --model-dir "${STATE_DIR}/models"
 
 systemctl daemon-reload
 systemctl enable cameraapp-agent

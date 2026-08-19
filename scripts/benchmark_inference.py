@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run a reproducible DeepFace warm-up and resource benchmark on the agent.
+"""Run a reproducible lightweight inference benchmark on the agent.
 
 Usage on the Raspberry Pi:
     .venv/bin/python scripts/benchmark_inference.py --image /ruta/temporal/frame.jpg
@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 import time
 from pathlib import Path
@@ -25,11 +24,14 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from operational_metrics import SystemMetricsCollector  # noqa: E402
+from lightweight_inference import analyze_age_gender  # noqa: E402
+from PIL import Image  # noqa: E402
+import numpy as np  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Precalienta DeepFace y mide recursos sin guardar datos biométricos."
+        description="Mide la inferencia ligera sin guardar datos biométricos."
     )
     parser.add_argument(
         "--image",
@@ -55,25 +57,15 @@ def main() -> int:
         print(json.dumps({"status": "error", "message": "--runs debe estar entre 1 y 10."}))
         return 2
 
-    # Importing lazily lets --help run even before TensorFlow is fully installed.
-    from deepface import DeepFace
-
     metrics = SystemMetricsCollector()
     before = metrics.collect()
     durations_ms: list[int] = []
-    face_counts: list[int] = []
+    image_rgb = np.array(Image.open(args.image).convert("RGB"))
 
     for _ in range(args.runs):
         started_at = time.perf_counter()
-        result = DeepFace.analyze(
-            img_path=str(args.image),
-            actions=["age", "gender"],
-            detector_backend="opencv",
-            enforce_detection=False,
-            silent=True,
-        )
+        analyze_age_gender(image_rgb)
         durations_ms.append(round((time.perf_counter() - started_at) * 1000))
-        face_counts.append(len(result) if isinstance(result, list) else 1)
 
     after = metrics.collect()
     report: dict[str, Any] = {
@@ -81,10 +73,9 @@ def main() -> int:
         "runs": args.runs,
         "durations_ms": durations_ms,
         "average_duration_ms": round(sum(durations_ms) / len(durations_ms)),
-        "face_count_observed": max(face_counts, default=0),
         "metrics_before": before,
         "metrics_after": after,
-        "deepface_home": os.getenv("DEEPFACE_HOME") or "default",
+        "inference_backend": "opencv_dnn",
     }
     print(json.dumps(report, ensure_ascii=False))
     return 0

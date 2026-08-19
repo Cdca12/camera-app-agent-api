@@ -10,7 +10,7 @@ Group=@CAMERAAPP_USER@
 WorkingDirectory=@APP_DIR@
 EnvironmentFile=-/etc/cameraapp/agent.env
 Environment=PYTHONUNBUFFERED=1
-Environment=DEEPFACE_HOME=/var/lib/cameraapp/deepface
+Environment=CAMERA_APP_MODEL_DIR=/var/lib/cameraapp/models
 Environment=CAMERA_APP_DB_PATH=/var/lib/cameraapp/camera_app_operational.db
 Environment=CAMERA_APP_TEST_DB_PATH=/var/lib/cameraapp/camera_app_test.db
 ExecStart=@APP_DIR@/.venv/bin/python -m uvicorn main:app --host 0.0.0.0 --port 7860

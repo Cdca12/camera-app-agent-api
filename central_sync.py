@@ -35,7 +35,7 @@ from configuration import set_camera_collection_enabled
 from operational_metrics import SystemMetricsCollector
 
 
-AGENT_VERSION = "0.3.0"
+AGENT_VERSION = "0.4.0"
 
 
 @dataclass(frozen=True)

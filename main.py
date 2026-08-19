@@ -5,7 +5,6 @@ from datetime import date
 from fastapi import FastAPI, File, UploadFile, HTTPException, Query, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from deepface import DeepFace
 from pydantic import BaseModel
 from PIL import Image
 import numpy as np
@@ -48,6 +47,7 @@ from database import (
 )
 from local_access import LOCAL_ACCESS_HEADER, local_access_is_configured, request_has_local_access
 from local_setup import setup_page
+from lightweight_inference import analyze_age_gender, model_is_installed
 
 cv2.setLogLevel(0)
 
@@ -125,8 +125,8 @@ face_detector = cv2.CascadeClassifier(
 
 app = FastAPI(
     title="CameraApp API",
-    description="API local para analizar edad y género usando DeepFace.",
-    version="0.1.0",
+    description="API local para analizar edad y género con OpenCV DNN.",
+    version="0.4.0",
 )
 logger = logging.getLogger("camera-app-api")
 
@@ -222,6 +222,8 @@ def health():
         "service": "camera-app-api",
         "central_sync_configured": central_sync["configured"],
         "local_access_protected": local_access_is_configured(),
+        "inference_backend": "opencv_dnn",
+        "inference_model_installed": model_is_installed(),
     }
 
 
@@ -737,7 +739,7 @@ def run_collection_monitor() -> None:
                 break
             try:
                 frame = capture_camera_frame(
-                    camera["channel"],
+                    get_collection_source_channel(camera["channel"]),
                     store_id=camera["store_id"],
                 )
                 watch_frame_for_new_faces(
@@ -807,16 +809,8 @@ def load_image_as_numpy(image_bytes: bytes) -> np.ndarray:
 
 
 def analyze_image(image_np: np.ndarray) -> dict:
-    result = DeepFace.analyze(
-        img_path=image_np,
-        actions=["age", "gender"],
-        detector_backend="opencv",
-        enforce_detection=False,
-        silent=True,
-    )
-
-    faces = result if isinstance(result, list) else [result]
-    normalized_faces = [normalize_face(face) for face in faces]
+    ensure_inference_memory_available()
+    normalized_faces = [normalize_face(analyze_age_gender(image_np))]
 
     return {
         "success": True,
@@ -1447,11 +1441,49 @@ def get_camera_scan_total_timeout_seconds() -> float:
 
 
 def get_collection_monitor_interval_seconds() -> float:
-    value = os.getenv("CAMERA_COLLECTION_INTERVAL_SECONDS", "8")
+    value = os.getenv("CAMERA_COLLECTION_INTERVAL_SECONDS", "20")
     try:
         return max(3, float(value))
     except ValueError:
-        return 8
+        return 20
+
+
+def get_collection_source_channel(channel: str | None) -> str | None:
+    enabled = os.getenv("CAMERA_COLLECTION_USE_SUBSTREAM", "true").strip().lower()
+    if enabled not in {"1", "true", "yes", "on"}:
+        return channel
+    if channel and channel.isdigit() and channel.endswith("01"):
+        return f"{channel[:-1]}2"
+    return channel
+
+
+def ensure_inference_memory_available() -> None:
+    available_mb = get_available_memory_mb()
+    minimum_mb = get_minimum_inference_memory_mb()
+    if available_mb is not None and available_mb < minimum_mb:
+        raise RuntimeError(
+            f"Inferencia omitida para proteger el equipo: {available_mb} MiB disponibles; "
+            f"se requieren al menos {minimum_mb} MiB."
+        )
+
+
+def get_available_memory_mb() -> int | None:
+    try:
+        with open("/proc/meminfo", encoding="utf-8") as meminfo:
+            for line in meminfo:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) // 1024
+    except (OSError, ValueError, IndexError):
+        return None
+    return None
+
+
+def get_minimum_inference_memory_mb() -> int:
+    value = os.getenv("CAMERA_APP_MIN_INFERENCE_MEMORY_MB", "250")
+    try:
+        return max(64, int(value))
+    except ValueError:
+        return 250
 
 
 def normalize_face(face: dict) -> dict:

@@ -9,7 +9,7 @@ app_port: 7860
 
 # CameraApp API
 
-FastAPI + DeepFace API para estimar edad y género desde un frame enviado por multipart/form-data.
+FastAPI + OpenCV DNN para estimar edad y género desde un frame enviado por multipart/form-data.
 
 ## Ejecutable Windows
 
@@ -224,7 +224,7 @@ CAMERA_TIMEOUT_MS=5000
 
 `GET /camera-frame` devuelve un JPEG del frame actual. También acepta
 `?channel=<canal>`. `POST /analyze-camera-frame` captura un frame y lo analiza
-con DeepFace; también acepta `?channel=<canal>&camera_name=<nombre>`.
+con el modelo ligero; también acepta `?channel=<canal>&camera_name=<nombre>`.
 
 ## Monitoreo ligero de caras nuevas
 
@@ -257,7 +257,7 @@ responde:
 }
 ```
 
-Si detecta una cara nueva, entonces corre DeepFace para edad/género y responde:
+Si detecta una cara nueva, ejecuta el modelo ligero para edad/género y responde:
 
 ```json
 {
@@ -279,12 +279,18 @@ Variables opcionales:
 FACE_CACHE_TTL_SECONDS=300
 FACE_MATCH_THRESHOLD=0.18
 FACE_DETECT_WIDTH=640
+CAMERA_COLLECTION_USE_SUBSTREAM=true
+CAMERA_COLLECTION_INTERVAL_SECONDS=20
+CAMERA_APP_MIN_INFERENCE_MEMORY_MB=250
 ```
 
 `FACE_CACHE_TTL_SECONDS` define cuánto tiempo una cara vista queda en cache.
 `FACE_MATCH_THRESHOLD` ajusta qué tan parecidas deben ser dos caras para tratarse
 como la misma persona. `FACE_DETECT_WIDTH` reduce el frame antes de detectar
-caras para que el monitoreo sea más ligero.
+caras para que el monitoreo sea más ligero. En NVR Hikvision, la recolección usa
+por defecto el substream correspondiente (`501` -> `502`) sin cambiar el canal
+registrado en los eventos. El monitor espera 20 segundos entre ciclos y omite
+la inferencia si la memoria disponible cae por debajo del umbral configurado.
 
 Para desarrollo local puedes guardar `CAMERA_SOURCE` en un archivo `.env`.
 
@@ -308,7 +314,7 @@ una cola local y se reintentan en el siguiente ciclo.
 La instalación de producción debe conservar su estado fuera del checkout:
 
 - SQLite y llave Fernet: `/var/lib/cameraapp`.
-- Pesos descargados por DeepFace: `/var/lib/cameraapp/deepface`.
+- Modelo ligero verificado: `/var/lib/cameraapp/models`.
 - Variables privadas: `/etc/cameraapp/agent.env` con permisos restringidos.
 
 En la Raspberry, tras clonar el repositorio y crear el entorno virtual, instala
@@ -320,8 +326,9 @@ sudo scripts/install_agent.sh
 
 El archivo `deploy/systemd/cameraapp-agent.service.template` se convierte en la
 unidad `cameraapp-agent`; esta debe iniciar automáticamente y responder en
-`/health`. El primer inicio puede tardar mientras TensorFlow prepara sus
-componentes.
+`/health`. El instalador descarga y verifica por SHA-384 el modelo oficial
+`age-gender-recognition-retail-0013`, lo convierte una sola vez a ONNX y valida
+que OpenCV pueda ejecutar sus dos salidas antes de iniciar el servicio.
 
 Antes de usar una cámara real, ejecuta el benchmark con una imagen temporal que
 no se sube ni se guarda por CameraApp:
