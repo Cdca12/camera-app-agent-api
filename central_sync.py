@@ -31,6 +31,7 @@ from database import (
     mark_camera_thumbnails_synced,
     set_central_sync_state,
 )
+from configuration import set_camera_collection_enabled
 from operational_metrics import SystemMetricsCollector
 
 
@@ -152,10 +153,12 @@ class CentralSyncService:
     def _sync_cameras(self, local_store_id: int) -> None:
         payload_cameras = []
         thumbnail_camera_ids = []
+        local_cameras_by_channel = {}
         for camera in get_sync_cameras(local_store_id, self.database_path):
             channel = self._central_channel(camera["channel"])
             if channel is None:
                 continue
+            local_cameras_by_channel[channel] = camera
             payload = {
                 "name": camera["name"],
                 "channel": channel,
@@ -167,7 +170,17 @@ class CentralSyncService:
                 thumbnail_camera_ids.append(camera["id"])
             payload_cameras.append(payload)
         if payload_cameras:
-            self._post("/edge/cameras/sync", {"cameras": payload_cameras})
+            response = self._post("/edge/cameras/sync", {"cameras": payload_cameras})
+            for config in response.get("camera_configs", []):
+                camera = local_cameras_by_channel.get(config.get("channel"))
+                if camera is None or not isinstance(config.get("collection_enabled"), bool):
+                    continue
+                set_camera_collection_enabled(
+                    local_store_id,
+                    camera["id"],
+                    config["collection_enabled"],
+                    self.database_path,
+                )
             mark_camera_thumbnails_synced(thumbnail_camera_ids, self.database_path)
 
     def _sync_events(self, local_store: dict) -> int:

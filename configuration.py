@@ -449,6 +449,26 @@ def update_camera(
     }
 
 
+def set_camera_collection_enabled(
+    store_id: int,
+    camera_id: int,
+    collection_enabled: bool,
+    database_path: Path | None = None,
+) -> None:
+    with database_connection(database_path) as connection:
+        cursor = connection.execute(
+            """
+            UPDATE cameras
+            SET collection_enabled = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND store_id = ? AND is_active = 1
+            """,
+            (int(collection_enabled), camera_id, store_id),
+        )
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Cámara activa no encontrada")
+        connection.commit()
+
+
 def delete_camera(store_id: int, camera_id: int, database_path: Path | None = None) -> None:
     with database_connection(database_path) as connection:
         _require_active_store(connection, store_id)

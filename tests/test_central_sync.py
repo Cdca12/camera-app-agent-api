@@ -133,6 +133,32 @@ class CentralSyncTests(unittest.TestCase):
         second_payload = next(payload for path, payload in service.requests if path == "/edge/cameras/sync")
         self.assertNotIn("thumbnail_base64", second_payload["cameras"][0])
 
+    def test_camera_collection_state_is_applied_from_central(self) -> None:
+        camera = create_camera(
+            self.store_id,
+            "Cámara 1",
+            "101",
+            database_path=self.database_path,
+        )
+        service = RecordingSyncService(self.settings, self.database_path)
+        original_post = service._post
+
+        def post_with_command(path: str, payload: dict) -> dict:
+            response = original_post(path, payload)
+            if path == "/edge/cameras/sync":
+                return {"camera_configs": [{"channel": 101, "collection_enabled": True}]}
+            return response
+
+        service._post = post_with_command
+        service.sync_once()
+
+        with database_connection(self.database_path) as connection:
+            stored = connection.execute(
+                "SELECT collection_enabled FROM cameras WHERE id = ?",
+                (camera["id"],),
+            ).fetchone()
+        self.assertEqual(stored["collection_enabled"], 1)
+
     def test_registering_existing_channel_refreshes_thumbnail_without_duplication(self) -> None:
         first_thumbnail = base64.b64encode(b"\xff\xd8\xfffirst").decode("ascii")
         second_thumbnail = base64.b64encode(b"\xff\xd8\xffsecond").decode("ascii")
