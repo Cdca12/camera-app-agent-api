@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import date
-import base64
 
 from fastapi import FastAPI, File, UploadFile, HTTPException, Query, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -39,6 +38,7 @@ from configuration import (
     update_store,
 )
 from captured_events import record_captured_faces
+from camera_preview import build_camera_preview
 from central_sync import CentralSyncService, run_central_sync_monitor
 from database import (
     ensure_local_store,
@@ -899,27 +899,6 @@ def probe_camera_source_direct(
         capture.release()
 
     return None
-
-
-def build_camera_preview(frame: np.ndarray) -> str | None:
-    if not is_preview_frame_usable(frame):
-        return None
-
-    height, width = frame.shape[:2]
-    preview_width = min(width, 220)
-    preview_height = max(1, round(height * (preview_width / width)))
-    preview = cv2.resize(frame, (preview_width, preview_height), interpolation=cv2.INTER_AREA)
-    encoded, image = cv2.imencode(
-        ".jpg",
-        preview,
-        [cv2.IMWRITE_JPEG_QUALITY, 70],
-    )
-
-    if not encoded:
-        return None
-
-    payload = base64.b64encode(image.tobytes()).decode("ascii")
-    return f"data:image/jpeg;base64,{payload}"
 
 
 def read_camera_probe_frame(capture: cv2.VideoCapture) -> np.ndarray | None:
