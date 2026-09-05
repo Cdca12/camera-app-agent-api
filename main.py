@@ -41,6 +41,7 @@ from camera_preview import build_camera_preview, build_scan_preview
 from central_sync import CentralSyncService, run_central_sync_monitor
 from database import (
     ensure_local_store,
+    get_store_by_code,
     get_test_database_path,
     initialize_operational_database,
     initialize_test_database,
@@ -734,7 +735,16 @@ def watch_camera_frame(
 
 def run_collection_monitor() -> None:
     while not collection_monitor_stop.is_set():
-        for camera in list_collection_enabled_cameras():
+        assigned_store = get_store_by_code(
+            os.getenv("CAMERA_APP_LOCAL_STORE_CODE", "local").strip().lower() or "local"
+        )
+        assigned_store_id = assigned_store["id"] if assigned_store else None
+        cameras = (
+            list_collection_enabled_cameras(store_id=assigned_store_id)
+            if assigned_store_id is not None
+            else []
+        )
+        for camera in cameras:
             if collection_monitor_stop.is_set():
                 break
             try:
@@ -837,7 +847,7 @@ def capture_camera_frame(
 
     try:
         with suppress_stderr():
-            is_opened = capture.open(camera_source)
+            is_opened = open_camera_source(capture, camera_source)
 
             if not is_opened:
                 raise HTTPException(
@@ -901,7 +911,7 @@ def probe_camera_source_direct(
 
     try:
         with suppress_stderr():
-            is_opened = capture.open(camera_source)
+            is_opened = open_camera_source(capture, camera_source)
             frame = read_camera_probe_frame(capture) if is_opened else None
 
         if frame is not None:
@@ -930,6 +940,12 @@ def read_camera_probe_frame(capture: cv2.VideoCapture) -> np.ndarray | None:
     return fallback_frame
 
 
+def open_camera_source(capture: cv2.VideoCapture, camera_source: str | int) -> bool:
+    if isinstance(camera_source, str):
+        return capture.open(camera_source, cv2.CAP_FFMPEG)
+    return capture.open(camera_source)
+
+
 def is_preview_frame_usable(frame: np.ndarray) -> bool:
     grayscale = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     average_brightness = float(grayscale.mean())
@@ -948,7 +964,7 @@ def probe_camera_source_worker(
 
     try:
         with suppress_stderr():
-            is_opened = capture.open(camera_source)
+            is_opened = open_camera_source(capture, camera_source)
             frame = read_camera_probe_frame(capture) if is_opened else None
 
         if frame is not None:

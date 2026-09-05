@@ -317,18 +317,28 @@ def list_cameras(store_id: int, database_path: Path | None = None) -> list[dict]
     return [_camera_payload(row) for row in rows]
 
 
-def list_collection_enabled_cameras(database_path: Path | None = None) -> list[dict]:
+def list_collection_enabled_cameras(
+    store_id: int | None = None,
+    database_path: Path | None = None,
+) -> list[dict]:
     with database_connection(database_path) as connection:
+        parameters: tuple[int, ...] = ()
+        store_filter = ""
+        if store_id is not None:
+            store_filter = "AND cameras.store_id = ?"
+            parameters = (store_id,)
         rows = connection.execute(
-            """
+            f"""
             SELECT cameras.id, cameras.store_id, cameras.name, cameras.channel
             FROM cameras
             JOIN stores ON stores.id = cameras.store_id
             WHERE stores.is_active = 1
               AND cameras.is_active = 1
               AND cameras.collection_enabled = 1
+              {store_filter}
             ORDER BY cameras.store_id, cameras.id
-            """
+            """,
+            parameters,
         ).fetchall()
     return [dict(row) for row in rows]
 

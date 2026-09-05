@@ -7,7 +7,7 @@ from pathlib import Path
 
 from captured_events import record_captured_faces
 from central_sync import CentralSyncService, CentralSyncSettings
-from configuration import create_camera
+from configuration import create_camera, list_collection_enabled_cameras
 from database import (
     _copy_simulated_data,
     count_pending_sync_events,
@@ -158,6 +158,35 @@ class CentralSyncTests(unittest.TestCase):
                 (camera["id"],),
             ).fetchone()
         self.assertEqual(stored["collection_enabled"], 1)
+
+    def test_collection_query_is_limited_to_the_assigned_store(self) -> None:
+        assigned_camera = create_camera(
+            self.store_id,
+            "Cámara asignada",
+            "304",
+            collection_enabled=True,
+            database_path=self.database_path,
+        )
+        with database_connection(self.database_path) as connection:
+            previous_store = connection.execute(
+                "INSERT INTO stores (name, code, timezone) VALUES (?, ?, ?)",
+                ("Tienda anterior", "previous", "America/Mazatlan"),
+            )
+            connection.execute(
+                """
+                INSERT INTO cameras (store_id, name, channel, collection_enabled)
+                VALUES (?, ?, ?, 1)
+                """,
+                (previous_store.lastrowid, "Cámara anterior", "501"),
+            )
+            connection.commit()
+
+        cameras = list_collection_enabled_cameras(
+            store_id=self.store_id,
+            database_path=self.database_path,
+        )
+
+        self.assertEqual([camera["id"] for camera in cameras], [assigned_camera["id"]])
 
     def test_registering_existing_channel_refreshes_thumbnail_without_duplication(self) -> None:
         first_thumbnail = base64.b64encode(b"\xff\xd8\xfffirst").decode("ascii")
