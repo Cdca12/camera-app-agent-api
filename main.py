@@ -149,7 +149,7 @@ def start_collection_monitor() -> None:
 @app.on_event("startup")
 def start_central_sync_monitor() -> None:
     global central_sync_thread
-    service = CentralSyncService()
+    service = CentralSyncService(camera_validator=validate_assigned_camera_channel)
     if not service.settings.is_configured:
         logger.info("La sincronización central está pendiente de configuración")
         return
@@ -866,6 +866,20 @@ def capture_camera_frame(
         return frame
     finally:
         capture.release()
+
+
+def validate_assigned_camera_channel(channel: str) -> bool:
+    """Validate one channel requested by Central without exposing its RTSP URL."""
+    assigned_store = get_store_by_code(
+        os.getenv("CAMERA_APP_LOCAL_STORE_CODE", "local").strip().lower() or "local"
+    )
+    if assigned_store is None:
+        return False
+    try:
+        capture_camera_frame(channel, store_id=assigned_store["id"])
+        return True
+    except Exception:
+        return False
 
 
 def probe_camera_source(camera_source: str | int, timeout_ms: int) -> tuple[int, int, str | None] | None:

@@ -367,6 +367,7 @@ def create_camera(
             ON CONFLICT(store_id, channel) DO UPDATE SET
                 name = excluded.name,
                 location = excluded.location,
+                is_active = excluded.is_active,
                 thumbnail_jpeg = COALESCE(excluded.thumbnail_jpeg, cameras.thumbnail_jpeg),
                 thumbnail_synced = CASE
                     WHEN excluded.thumbnail_jpeg IS NOT NULL THEN 0
@@ -484,6 +485,23 @@ def delete_camera(store_id: int, camera_id: int, database_path: Path | None = No
         _require_active_store(connection, store_id)
         cursor = connection.execute(
             "DELETE FROM cameras WHERE id = ? AND store_id = ?",
+            (camera_id, store_id),
+        )
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Cámara no encontrada")
+        connection.commit()
+
+
+def deactivate_camera(store_id: int, camera_id: int, database_path: Path | None = None) -> None:
+    """Retire a camera from collection/sync without deleting its local event history."""
+    with database_connection(database_path) as connection:
+        _require_active_store(connection, store_id)
+        cursor = connection.execute(
+            """
+            UPDATE cameras
+            SET is_active = 0, collection_enabled = 0, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND store_id = ?
+            """,
             (camera_id, store_id),
         )
         if cursor.rowcount == 0:

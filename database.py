@@ -222,7 +222,7 @@ def get_sync_cameras(
             SELECT id, name, channel, is_active, collection_enabled,
                    thumbnail_jpeg, thumbnail_synced
             FROM cameras
-            WHERE store_id = ?
+            WHERE store_id = ? AND is_active = 1
             ORDER BY id
             """,
             (store_id,),

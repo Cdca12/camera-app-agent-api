@@ -159,6 +159,69 @@ class CentralSyncTests(unittest.TestCase):
             ).fetchone()
         self.assertEqual(stored["collection_enabled"], 1)
 
+    def test_camera_validation_is_reported_and_deleted_camera_is_retired(self) -> None:
+        camera = create_camera(
+            self.store_id,
+            "Cámara 3",
+            "302",
+            database_path=self.database_path,
+        )
+        validated_channels = []
+        service = RecordingSyncService(
+            self.settings,
+            self.database_path,
+            camera_validator=lambda channel: validated_channels.append(channel) or True,
+        )
+        original_post = service._post
+
+        def post_with_commands(path: str, payload: dict) -> dict:
+            response = original_post(path, payload)
+            if path == "/edge/cameras/sync":
+                return {
+                    "camera_configs": [
+                        {
+                            "channel": 302,
+                            "collection_enabled": False,
+                            "validation_requested": True,
+                            "deleted": False,
+                        }
+                    ]
+                }
+            return response
+
+        service._post = post_with_commands
+        service.sync_once()
+
+        self.assertEqual(validated_channels, ["302"])
+        validation_payload = next(
+            payload for path, payload in service.requests if path == "/edge/cameras/validation"
+        )
+        self.assertTrue(validation_payload["reachable"])
+
+        def post_with_delete(path: str, payload: dict) -> dict:
+            response = original_post(path, payload)
+            if path == "/edge/cameras/sync":
+                return {
+                    "camera_configs": [
+                        {
+                            "channel": 302,
+                            "collection_enabled": False,
+                            "validation_requested": False,
+                            "deleted": True,
+                        }
+                    ]
+                }
+            return response
+
+        service._post = post_with_delete
+        service.sync_once()
+        with database_connection(self.database_path) as connection:
+            stored = connection.execute(
+                "SELECT is_active, collection_enabled FROM cameras WHERE id = ?",
+                (camera["id"],),
+            ).fetchone()
+        self.assertEqual((stored["is_active"], stored["collection_enabled"]), (0, 0))
+
     def test_collection_query_is_limited_to_the_assigned_store(self) -> None:
         assigned_camera = create_camera(
             self.store_id,

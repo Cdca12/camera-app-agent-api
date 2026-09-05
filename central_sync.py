@@ -15,7 +15,7 @@ import threading
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
@@ -31,7 +31,7 @@ from database import (
     mark_camera_thumbnails_synced,
     set_central_sync_state,
 )
-from configuration import set_camera_collection_enabled
+from configuration import deactivate_camera, set_camera_collection_enabled
 from operational_metrics import SystemMetricsCollector
 
 
@@ -77,10 +77,12 @@ class CentralSyncService:
         self,
         settings: CentralSyncSettings | None = None,
         database_path: Path | None = None,
+        camera_validator: Callable[[str], bool] | None = None,
     ) -> None:
         self.settings = settings or CentralSyncSettings.from_environment()
         self.database_path = database_path
         self.metrics = SystemMetricsCollector()
+        self.camera_validator = camera_validator
 
     def status(self) -> dict[str, Any]:
         local_store = self._get_local_store()
@@ -173,7 +175,12 @@ class CentralSyncService:
             response = self._post("/edge/cameras/sync", {"cameras": payload_cameras})
             for config in response.get("camera_configs", []):
                 camera = local_cameras_by_channel.get(config.get("channel"))
-                if camera is None or not isinstance(config.get("collection_enabled"), bool):
+                if camera is None:
+                    continue
+                if config.get("deleted") is True:
+                    deactivate_camera(local_store_id, camera["id"], self.database_path)
+                    continue
+                if not isinstance(config.get("collection_enabled"), bool):
                     continue
                 set_camera_collection_enabled(
                     local_store_id,
@@ -181,6 +188,16 @@ class CentralSyncService:
                     config["collection_enabled"],
                     self.database_path,
                 )
+                if config.get("validation_requested") is True and self.camera_validator is not None:
+                    reachable = self.camera_validator(camera["channel"])
+                    self._post(
+                        "/edge/cameras/validation",
+                        {
+                            "channel": config["channel"],
+                            "reachable": reachable,
+                            "checked_at": _now_iso(),
+                        },
+                    )
             mark_camera_thumbnails_synced(thumbnail_camera_ids, self.database_path)
 
     def _sync_events(self, local_store: dict) -> int:
