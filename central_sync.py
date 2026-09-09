@@ -12,9 +12,11 @@ import json
 import os
 import socket
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from time import monotonic
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -36,6 +38,7 @@ from operational_metrics import SystemMetricsCollector
 
 
 AGENT_VERSION = "0.4.0"
+CAMERA_VALIDATION_INTERVAL_SECONDS = 10 * 60
 
 
 @dataclass(frozen=True)
@@ -83,6 +86,7 @@ class CentralSyncService:
         self.database_path = database_path
         self.metrics = SystemMetricsCollector()
         self.camera_validator = camera_validator
+        self._last_periodic_validation_at: float | None = None
 
     def status(self) -> dict[str, Any]:
         local_store = self._get_local_store()
@@ -173,6 +177,8 @@ class CentralSyncService:
             payload_cameras.append(payload)
         if payload_cameras:
             response = self._post("/edge/cameras/sync", {"cameras": payload_cameras})
+            periodic_validation_due = self._is_periodic_validation_due()
+            validation_targets: list[tuple[int, str]] = []
             for config in response.get("camera_configs", []):
                 camera = local_cameras_by_channel.get(config.get("channel"))
                 if camera is None:
@@ -188,17 +194,48 @@ class CentralSyncService:
                     config["collection_enabled"],
                     self.database_path,
                 )
-                if config.get("validation_requested") is True and self.camera_validator is not None:
-                    reachable = self.camera_validator(camera["channel"])
-                    self._post(
-                        "/edge/cameras/validation",
-                        {
-                            "channel": config["channel"],
-                            "reachable": reachable,
-                            "checked_at": _now_iso(),
-                        },
-                    )
+                if self.camera_validator is not None and (
+                    config.get("validation_requested") is True or periodic_validation_due
+                ):
+                    validation_targets.append((config["channel"], camera["channel"]))
+            self._report_camera_validations(validation_targets)
+            if periodic_validation_due and validation_targets:
+                self._last_periodic_validation_at = monotonic()
             mark_camera_thumbnails_synced(thumbnail_camera_ids, self.database_path)
+
+    def _is_periodic_validation_due(self) -> bool:
+        if self.camera_validator is None:
+            return False
+        if self._last_periodic_validation_at is None:
+            return True
+        return monotonic() - self._last_periodic_validation_at >= CAMERA_VALIDATION_INTERVAL_SECONDS
+
+    def _report_camera_validations(self, targets: list[tuple[int, str]]) -> None:
+        """Probe all configured cameras concurrently, then report each result."""
+
+        if not targets or self.camera_validator is None:
+            return
+        results: dict[int, bool] = {}
+        with ThreadPoolExecutor(max_workers=min(len(targets), 8)) as executor:
+            futures = {
+                executor.submit(self.camera_validator, local_channel): central_channel
+                for central_channel, local_channel in targets
+            }
+            for future in as_completed(futures):
+                central_channel = futures[future]
+                try:
+                    results[central_channel] = bool(future.result())
+                except Exception:
+                    results[central_channel] = False
+        for central_channel, _local_channel in targets:
+            self._post(
+                "/edge/cameras/validation",
+                {
+                    "channel": central_channel,
+                    "reachable": results[central_channel],
+                    "checked_at": _now_iso(),
+                },
+            )
 
     def _sync_events(self, local_store: dict) -> int:
         events = get_pending_sync_events(

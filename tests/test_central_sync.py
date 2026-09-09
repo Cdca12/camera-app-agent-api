@@ -222,6 +222,37 @@ class CentralSyncTests(unittest.TestCase):
             ).fetchone()
         self.assertEqual((stored["is_active"], stored["collection_enabled"]), (0, 0))
 
+    def test_all_cameras_are_validated_on_the_periodic_check(self) -> None:
+        first_camera = create_camera(self.store_id, "Cámara 1", "101", database_path=self.database_path)
+        second_camera = create_camera(self.store_id, "Cámara 2", "302", database_path=self.database_path)
+        validated_channels = []
+        service = RecordingSyncService(
+            self.settings,
+            self.database_path,
+            camera_validator=lambda channel: validated_channels.append(channel) or True,
+        )
+        original_post = service._post
+
+        def post_with_camera_configs(path: str, payload: dict) -> dict:
+            response = original_post(path, payload)
+            if path == "/edge/cameras/sync":
+                return {
+                    "camera_configs": [
+                        {"channel": 101, "collection_enabled": False, "validation_requested": False, "deleted": False},
+                        {"channel": 302, "collection_enabled": False, "validation_requested": False, "deleted": False},
+                    ]
+                }
+            return response
+
+        service._post = post_with_camera_configs
+        service.sync_once()
+        self.assertCountEqual(validated_channels, ["101", "302"])
+        validation_payloads = [payload for path, payload in service.requests if path == "/edge/cameras/validation"]
+        self.assertEqual({payload["channel"] for payload in validation_payloads}, {101, 302})
+
+        service.sync_once()
+        self.assertCountEqual(validated_channels, ["101", "302"])
+
     def test_collection_query_is_limited_to_the_assigned_store(self) -> None:
         assigned_camera = create_camera(
             self.store_id,
