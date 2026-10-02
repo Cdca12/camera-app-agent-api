@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 
 from captured_events import record_captured_faces
@@ -65,15 +66,18 @@ class CentralSyncTests(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_complete_capture_is_queued_and_confirmed(self) -> None:
+        captured_at = datetime(2026, 10, 2, 8, 15, 30)
         recorded = record_captured_faces(
             self.store_id,
             "Cámara del dispositivo",
             "device-local",
             [{"gender": "Masculino", "age": 29, "age_bucket": "25-34"}],
             self.database_path,
+            captured_at=captured_at,
         )
 
         self.assertEqual(len(recorded), 1)
+        self.assertEqual(recorded[0]["captured_at"], "2026-10-02 08:15:30")
         self.assertEqual(count_pending_sync_events(self.store_id, self.database_path), 1)
 
         service = RecordingSyncService(self.settings, self.database_path)

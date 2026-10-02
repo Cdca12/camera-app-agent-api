@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
 from fastapi import FastAPI, File, UploadFile, HTTPException, Query, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,6 +18,7 @@ from contextlib import contextmanager
 from urllib.parse import quote
 from typing import Optional
 import time
+from queue import Empty
 
 from dashboard import get_dashboard_daily, get_dashboard_summary, list_stores
 from configuration import (
@@ -39,6 +40,7 @@ from configuration import (
 from captured_events import record_captured_faces
 from camera_preview import build_camera_preview, build_scan_preview
 from central_sync import CentralSyncService, run_central_sync_monitor
+from collection_buffer import BufferedCameraFrame, CameraFrameBuffer
 from database import (
     ensure_local_store,
     get_store_by_code,
@@ -116,7 +118,9 @@ store_runtime_camera_configs: dict[int, dict[str, str]] = {}
 test_store_runtime_camera_configs: dict[int, dict[str, str]] = {}
 face_cache: dict[str, list[dict]] = {}
 collection_monitor_stop = threading.Event()
-collection_monitor_thread: threading.Thread | None = None
+collection_capture_thread: threading.Thread | None = None
+collection_processor_thread: threading.Thread | None = None
+collection_frame_buffer = CameraFrameBuffer(capacity=120)
 central_sync_stop = threading.Event()
 central_sync_thread: threading.Thread | None = None
 face_detector = cv2.CascadeClassifier(
@@ -134,16 +138,23 @@ logger = logging.getLogger("camera-app-api")
 
 @app.on_event("startup")
 def start_collection_monitor() -> None:
-    global collection_monitor_thread
-    if collection_monitor_thread and collection_monitor_thread.is_alive():
+    global collection_capture_thread, collection_processor_thread, collection_frame_buffer
+    if collection_capture_thread and collection_capture_thread.is_alive():
         return
     collection_monitor_stop.clear()
-    collection_monitor_thread = threading.Thread(
-        target=run_collection_monitor,
-        name="camera-collection-monitor",
+    collection_frame_buffer = CameraFrameBuffer(capacity=get_collection_buffer_capacity())
+    collection_capture_thread = threading.Thread(
+        target=run_collection_capture,
+        name="camera-frame-capture",
         daemon=True,
     )
-    collection_monitor_thread.start()
+    collection_processor_thread = threading.Thread(
+        target=run_collection_processor,
+        name="camera-frame-processor",
+        daemon=True,
+    )
+    collection_capture_thread.start()
+    collection_processor_thread.start()
 
 
 @app.on_event("startup")
@@ -225,6 +236,7 @@ def health():
         "local_access_protected": local_access_is_configured(),
         "inference_backend": "opencv_dnn",
         "inference_model_installed": model_is_installed(),
+        "collection_buffer": collection_frame_buffer.status(),
     }
 
 
@@ -733,8 +745,9 @@ def watch_camera_frame(
         }
 
 
-def run_collection_monitor() -> None:
+def run_collection_capture() -> None:
     while not collection_monitor_stop.is_set():
+        cycle_started_at = time.monotonic()
         assigned_store = get_store_by_code(
             os.getenv("CAMERA_APP_LOCAL_STORE_CODE", "local").strip().lower() or "local"
         )
@@ -752,13 +765,22 @@ def run_collection_monitor() -> None:
                     get_collection_source_channel(camera["channel"]),
                     store_id=camera["store_id"],
                 )
-                watch_frame_for_new_faces(
-                    frame=frame,
-                    cache_key=f"store:{camera['store_id']}:camera:{camera['id']}",
-                    source="Red",
-                    camera_name=camera["name"],
-                    channel=camera["channel"],
-                    store_id=camera["store_id"],
+                encoded, jpeg = cv2.imencode(
+                    ".jpg",
+                    frame,
+                    [cv2.IMWRITE_JPEG_QUALITY, get_collection_buffer_jpeg_quality()],
+                )
+                if not encoded:
+                    raise RuntimeError("No se pudo comprimir el frame capturado")
+                collection_frame_buffer.put(
+                    BufferedCameraFrame(
+                        store_id=camera["store_id"],
+                        camera_id=camera["id"],
+                        camera_name=camera["name"],
+                        channel=camera["channel"],
+                        captured_at=datetime.now(),
+                        jpeg_bytes=jpeg.tobytes(),
+                    )
                 )
             except Exception as error:
                 logger.warning(
@@ -767,7 +789,42 @@ def run_collection_monitor() -> None:
                     error,
                 )
 
-        collection_monitor_stop.wait(get_collection_monitor_interval_seconds())
+        elapsed = time.monotonic() - cycle_started_at
+        collection_monitor_stop.wait(max(0, get_collection_capture_interval_seconds() - elapsed))
+
+
+def run_collection_processor() -> None:
+    while not collection_monitor_stop.is_set():
+        try:
+            buffered_frame = collection_frame_buffer.get(timeout=0.5)
+        except Empty:
+            continue
+        try:
+            frame = cv2.imdecode(
+                np.frombuffer(buffered_frame.jpeg_bytes, dtype=np.uint8),
+                cv2.IMREAD_COLOR,
+            )
+            if frame is None:
+                raise RuntimeError("No se pudo decodificar el frame del buffer")
+            watch_frame_for_new_faces(
+                frame=frame,
+                cache_key=(
+                    f"store:{buffered_frame.store_id}:camera:{buffered_frame.camera_id}"
+                ),
+                source="Red",
+                camera_name=buffered_frame.camera_name,
+                channel=buffered_frame.channel,
+                store_id=buffered_frame.store_id,
+                captured_at=buffered_frame.captured_at,
+            )
+        except Exception as error:
+            logger.warning(
+                "No se pudo procesar el frame capturado para la cámara %s: %s",
+                buffered_frame.camera_id,
+                error,
+            )
+        finally:
+            collection_frame_buffer.mark_processed()
 
 
 @app.post("/watch-uploaded-frame")
@@ -1201,6 +1258,7 @@ def watch_frame_for_new_faces(
     camera_name: Optional[str],
     channel: Optional[str],
     store_id: int,
+    captured_at: datetime | None = None,
 ) -> dict:
     detected_faces = detect_light_faces(frame)
 
@@ -1251,6 +1309,7 @@ def watch_frame_for_new_faces(
         camera_name,
         channel,
         analyzed_faces,
+        captured_at=captured_at,
     )
 
     return {
@@ -1470,12 +1529,28 @@ def get_camera_scan_total_timeout_seconds() -> float:
         return 12
 
 
-def get_collection_monitor_interval_seconds() -> float:
-    value = os.getenv("CAMERA_COLLECTION_INTERVAL_SECONDS", "20")
+def get_collection_capture_interval_seconds() -> float:
+    value = os.getenv("CAMERA_COLLECTION_CAPTURE_INTERVAL_SECONDS", "1")
     try:
-        return max(3, float(value))
+        return max(0.2, float(value))
     except ValueError:
-        return 20
+        return 1
+
+
+def get_collection_buffer_capacity() -> int:
+    value = os.getenv("CAMERA_COLLECTION_BUFFER_CAPACITY", "120")
+    try:
+        return max(1, min(3600, int(value)))
+    except ValueError:
+        return 120
+
+
+def get_collection_buffer_jpeg_quality() -> int:
+    value = os.getenv("CAMERA_COLLECTION_BUFFER_JPEG_QUALITY", "70")
+    try:
+        return max(30, min(95, int(value)))
+    except ValueError:
+        return 70
 
 
 def get_collection_source_channel(channel: str | None) -> str | None:

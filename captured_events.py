@@ -15,13 +15,14 @@ def record_captured_faces(
     channel: str | None,
     faces: list[dict],
     database_path: Path | None = None,
+    captured_at: datetime | None = None,
 ) -> list[dict]:
     if not faces:
         return []
 
     normalized_channel = (channel or "device-local").strip() or "device-local"
     normalized_name = (camera_name or "Cámara del dispositivo").strip()
-    captured_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    captured_at_value = (captured_at or datetime.now()).strftime("%Y-%m-%d %H:%M:%S")
 
     with database_connection(database_path) as connection:
         store = connection.execute(
@@ -97,7 +98,7 @@ def record_captured_faces(
                     store_id,
                     camera_id,
                     event["event_uuid"],
-                    captured_at,
+                    captured_at_value,
                     event["gender"],
                     event["age_estimate"],
                     event["age_bucket"],
@@ -117,7 +118,7 @@ def record_captured_faces(
     return [
         {
             "event_uuid": event["event_uuid"],
-            "captured_at": captured_at,
+            "captured_at": captured_at_value,
             "store_id": store_id,
             "camera_id": camera_id,
         }
