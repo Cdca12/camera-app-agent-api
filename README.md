@@ -11,6 +11,12 @@ app_port: 7860
 
 FastAPI + OpenCV DNN para estimar edad y género desde un frame enviado por multipart/form-data.
 
+## Roadmap
+
+La estrategia de validación en Maja, la migración a detección de personas con
+tracking y los modelos futuros de despliegue local, centralizado y cloud están
+documentados en [`docs/validation-and-deployment-roadmap.md`](docs/validation-and-deployment-roadmap.md).
+
 ## Ejecutable Windows
 
 Para correr la API en una PC remota del negocio como `CameraAppAPI.exe`, revisa
